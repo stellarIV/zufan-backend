@@ -4,6 +4,7 @@ import datetime
 from bson import ObjectId
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
+from flasgger import Swagger, swag_from
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}})
+swagger = Swagger(app)
 
 # Global objects
 vector_store = None
@@ -81,6 +83,22 @@ except Exception as e:
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    """
+    Check the health of the application.
+    ---
+    responses:
+      200:
+        description: Returns the health status of the application.
+        schema:
+          properties:
+            status:
+              type: string
+              example: healthy
+            vector_store_initialized:
+              type: boolean
+            rag_chain_initialized:
+              type: boolean
+    """
     status = {
         "status": "healthy",
         "vector_store_initialized": vector_store is not None,
@@ -91,13 +109,33 @@ def health_check():
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """
-    Chat endpoint.
-    Request: { 
-        "messages": [{"role": "user", "content": "..."}], 
-        "sessionId": "optional_session_id",
-        "userId": "optional_user_id"
-    }
-    Supports streaming response and saves history.
+    Chat interaction with streaming support and history.
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            messages:
+              type: array
+              items:
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+            sessionId:
+              type: string
+            userId:
+              type: string
+    responses:
+      200:
+        description: Streamed response from the chatbot.
+      400:
+        description: Missing required fields.
+      503:
+        description: RAG pipeline not initialized.
     """
     if not rag_chain:
         return jsonify({"error": "RAG pipeline not initialized"}), 503
@@ -183,7 +221,25 @@ def chat():
 
 @app.route('/api/chat/sessions', methods=['POST'])
 def create_session():
-    """Create a new chat session."""
+    """
+    Create a new chat session.
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            userId:
+              type: string
+            title:
+              type: string
+    responses:
+      201:
+        description: Session created successfully.
+      500:
+        description: Error creating session.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
     
@@ -215,7 +271,20 @@ def create_session():
 
 @app.route('/api/chat/sessions', methods=['GET'])
 def list_sessions():
-    """List chat sessions for a user."""
+    """
+    List chat sessions for a specific user.
+    ---
+    parameters:
+      - name: userId
+        in: query
+        type: string
+        required: true
+    responses:
+      200:
+        description: List of chat sessions.
+      400:
+        description: Missing userId.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
     
@@ -245,7 +314,18 @@ def list_sessions():
 
 @app.route('/api/chat/sessions/<session_id>', methods=['GET'])
 def get_session_history(session_id):
-    """Get messages for a specific session."""
+    """
+    Get message history for a specific chat session.
+    ---
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: List of messages in the session.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
         
@@ -271,7 +351,18 @@ def get_session_history(session_id):
 
 @app.route('/api/chat/sessions/<session_id>', methods=['DELETE'])
 def delete_session(session_id):
-    """Delete a chat session."""
+    """
+    Delete a specific chat session and its messages.
+    ---
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Session deleted successfully.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
         
@@ -292,7 +383,13 @@ def delete_session(session_id):
 
 @app.route('/api/vector/stats', methods=['GET'])
 def vector_stats():
-    """Get statistics for the Vector Store Dashboard."""
+    """
+    Get statistics for the Vector Store.
+    ---
+    responses:
+      200:
+        description: Statistics about the vector store.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
         
@@ -331,7 +428,13 @@ def vector_stats():
 
 @app.route('/api/vector/recent', methods=['GET'])
 def get_recent_embeddings():
-    """Get recently indexed chunks."""
+    """
+    Get recently indexed vector chunks.
+    ---
+    responses:
+      200:
+        description: List of the most recent embeddings.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
         
@@ -362,7 +465,23 @@ def get_recent_embeddings():
 
 @app.route('/api/vector/search', methods=['POST'])
 def semantic_search_playground():
-    """Test retrieval relevance."""
+    """
+    Test retrieval relevance with semantic search.
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            query:
+              type: string
+            k:
+              type: integer
+    responses:
+      200:
+        description: List of top semantic search results.
+    """
     if not vector_store:
         return jsonify({"error": "Database not initialized"}), 503
         
@@ -395,8 +514,20 @@ def semantic_search_playground():
 @app.route('/api/upload/file', methods=['POST'])
 def upload_file():
     """
-    Upload PDF, extract text, and index.
-    Request: Multipart Form (file, metadata as json string optional)
+    Upload a PDF file, process it, and index its content.
+    ---
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        required: true
+    responses:
+      200:
+        description: File processed and indexed successfully.
+      400:
+        description: Invalid request.
     """
     if not vector_store:
         return jsonify({"error": "Vector store not initialized"}), 503
@@ -452,8 +583,29 @@ def upload_file():
 @app.route('/api/upload/chunks', methods=['POST'])
 def upload_chunks():
     """
-    Directly index chunks.
-    Request: { "documentId": string, "chunks": { "text": string, "metadata": object }[] }
+    Directly index pre-processed text chunks.
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            documentId:
+              type: string
+            chunks:
+              type: array
+              items:
+                properties:
+                  text:
+                    type: string
+                  metadata:
+                    type: object
+    responses:
+      200:
+        description: Chunks indexed successfully.
+      400:
+        description: Invalid request.
     """
     if not vector_store:
         return jsonify({"error": "Vector store not initialized"}), 503
@@ -487,9 +639,11 @@ def upload_chunks():
 @app.route('/api/documents', methods=['GET'])
 def list_documents():
     """
-    List documents.
-    Note: vector search doesn't natively support "list unique documents" efficiently without aggregation.
-    We will attempt to aggregate by 'source' metadata field.
+    List unique documents and their statistics from the vector store.
+    ---
+    responses:
+      200:
+        description: List of indexed documents.
     """
     if not vector_store:
         return jsonify({"error": "Vector store not initialized"}), 503
@@ -535,8 +689,16 @@ def list_documents():
 @app.route('/api/documents/<path:doc_id>', methods=['DELETE'])
 def delete_document(doc_id):
     """
-    Delete document by ID (source name).
-    Using <path:doc_id> to capture filenames with extensions.
+    Delete a document and all its associated vectors from the vector store.
+    ---
+    parameters:
+      - name: doc_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Document deleted successfully.
     """
     if not vector_store:
         return jsonify({"error": "Vector store not initialized"}), 503

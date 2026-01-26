@@ -10,3 +10,4 @@ langchain-google-genai
 langchain-mongodb
 pymongo
 google-generativeai
+flasgger
