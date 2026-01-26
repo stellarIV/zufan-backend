@@ -1,5 +1,7 @@
 import os
 import logging
+import datetime
+from bson import ObjectId
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -90,8 +92,12 @@ def health_check():
 def chat():
     """
     Chat endpoint.
-    Request: { "messages": [{"role": "user", "content": "..."}] }
-    Supports streaming response.
+    Request: { 
+        "messages": [{"role": "user", "content": "..."}], 
+        "sessionId": "optional_session_id",
+        "userId": "optional_user_id"
+    }
+    Supports streaming response and saves history.
     """
     if not rag_chain:
         return jsonify({"error": "RAG pipeline not initialized"}), 503
@@ -104,23 +110,65 @@ def chat():
     if not messages:
         return jsonify({"error": "Empty messages list"}), 400
     
+    session_id = data.get("sessionId")
+    user_id = data.get("userId")
+
     # Extract latest query
     last_message = messages[-1]
     query = last_message.get("content", "")
     
-    # We could use the history, but rag_utils' simple chain expects 'question' input.
-    # For a simple RAG, we stick to the last query.
-    # Todo: advanced history handling if needed.
+    # Save User Message if session exists
+    if session_id and vector_store:
+        try:
+            db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+            client = vector_store._collection.database.client
+            db = client[db_name]
+            
+            # Ensure session exists or create if valid ID provided (or handle client side creation)
+            # Here we assume client creates session first or we just log to the ID provided
+            
+            user_msg_doc = {
+                "sessionId": session_id,
+                "role": "user",
+                "content": query,
+                "createdAt": datetime.datetime.utcnow()
+            }
+            db.chat_messages.insert_one(user_msg_doc)
+            
+            # Update session timestamp
+            db.chat_sessions.update_one(
+                {"_id": ObjectId(session_id)},
+                {"$set": {"updatedAt": datetime.datetime.utcnow()}}
+            )
+        except Exception as e:
+            logger.error(f"Failed to save user message: {e}")
 
     try:
-        # Check if client accepts streaming
-        # For simplicity, we default to streaming if possible or just stream always and let client handle
-        
         def generate():
+            full_response = ""
             try:
                 # Streaming with LangChain
                 for chunk in rag_chain.stream(query):
+                    full_response += chunk
                     yield chunk
+                
+                # Save AI Message after streaming completes
+                if session_id and vector_store:
+                    try:
+                        db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+                        client = vector_store._collection.database.client
+                        db = client[db_name]
+                        
+                        ai_msg_doc = {
+                            "sessionId": session_id,
+                            "role": "assistant",
+                            "content": full_response,
+                            "createdAt": datetime.datetime.utcnow()
+                        }
+                        db.chat_messages.insert_one(ai_msg_doc)
+                    except Exception as e:
+                        logger.error(f"Failed to save AI message: {e}")
+
             except Exception as e:
                 logger.error(f"Error during generation: {e}")
                 yield f"Error: {str(e)}"
@@ -130,6 +178,218 @@ def chat():
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return jsonify({"error": str(e)}), 500
+
+# --- Chat History Endpoints ---
+
+@app.route('/api/chat/sessions', methods=['POST'])
+def create_session():
+    """Create a new chat session."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+    
+    data = request.get_json() or {}
+    user_id = data.get("userId", "anonymous")
+    title = data.get("title", "New Chat")
+    
+    try:
+        db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+        client = vector_store._collection.database.client
+        db = client[db_name]
+        
+        doc = {
+            "userId": user_id,
+            "title": title,
+            "createdAt": datetime.datetime.utcnow(),
+            "updatedAt": datetime.datetime.utcnow()
+        }
+        result = db.chat_sessions.insert_one(doc)
+        
+        return jsonify({
+            "sessionId": str(result.inserted_id),
+            "title": title,
+            "createdAt": doc["createdAt"].isoformat()
+        }), 201
+    except Exception as e:
+        logger.error(f"Create session error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat/sessions', methods=['GET'])
+def list_sessions():
+    """List chat sessions for a user."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+    
+    user_id = request.args.get("userId")
+    if not user_id:
+        return jsonify({"error": "Missing userId param"}), 400
+        
+    try:
+        db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+        client = vector_store._collection.database.client
+        db = client[db_name]
+        
+        cursor = db.chat_sessions.find({"userId": user_id}).sort("updatedAt", -1)
+        sessions = []
+        for doc in cursor:
+            sessions.append({
+                "id": str(doc["_id"]),
+                "title": doc.get("title", "Untitled"),
+                "createdAt": doc["createdAt"].isoformat(),
+                "updatedAt": doc["updatedAt"].isoformat()
+            })
+            
+        return jsonify(sessions), 200
+    except Exception as e:
+        logger.error(f"List sessions error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat/sessions/<session_id>', methods=['GET'])
+def get_session_history(session_id):
+    """Get messages for a specific session."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+        client = vector_store._collection.database.client
+        db = client[db_name]
+        
+        cursor = db.chat_messages.find({"sessionId": session_id}).sort("createdAt", 1)
+        messages = []
+        for doc in cursor:
+            messages.append({
+                "id": str(doc["_id"]),
+                "role": doc["role"],
+                "content": doc["content"],
+                "createdAt": doc["createdAt"].isoformat()
+            })
+            
+        return jsonify(messages), 200
+    except Exception as e:
+        logger.error(f"Get history error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat/sessions/<session_id>', methods=['DELETE'])
+def delete_session(session_id):
+    """Delete a chat session."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        db_name = os.environ.get("MONGODB_DB_NAME", "zufan_legal")
+        client = vector_store._collection.database.client
+        db = client[db_name]
+        
+        db.chat_sessions.delete_one({"_id": ObjectId(session_id)})
+        db.chat_messages.delete_many({"sessionId": session_id})
+            
+        return jsonify({"message": "Session deleted"}), 200
+    except Exception as e:
+        logger.error(f"Delete session error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# --- Vector Management Endpoints ---
+
+@app.route('/api/vector/stats', methods=['GET'])
+def vector_stats():
+    """Get statistics for the Vector Store Dashboard."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        collection = vector_store._collection
+        
+        # 1. Total Vectors (Chunks)
+        total_vectors = collection.count_documents({})
+        
+        # 2. Total Documents (Unique Sources)
+        pipeline = [{"$group": {"_id": "$metadata.source"}}, {"$count": "count"}]
+        docs_res = list(collection.aggregate(pipeline))
+        total_docs = docs_res[0]["count"] if docs_res else 0
+        
+        # 3. Index Size (Estimate or Real if available via command)
+        # Using db.command("collStats") is standard but often restricted in Atlas free tier or requires specific permissions
+        # We'll try a simple fallback: avg doc size * count or just raw collStats if allowed
+        index_size_mb = 0
+        try:
+            stats = collection.database.command("collStats", collection.name)
+            index_size_mb = stats.get("totalSize", 0) / (1024 * 1024) # Bytes to MB
+        except:
+            # Fallback invalid
+            index_size_mb = -1
+            
+        return jsonify({
+            "total_vectors": total_vectors,
+            "total_documents": total_docs,
+            "index_size_mb": round(index_size_mb, 2),
+            "dimensions": 768, # ge-text-embedding-004 is 768
+            "model": "text-embedding-004"
+        }), 200
+    except Exception as e:
+        logger.error(f"Stats error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/vector/recent', methods=['GET'])
+def get_recent_embeddings():
+    """Get recently indexed chunks."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        collection = vector_store._collection
+        # Assuming we don't have a 'createdAt' on chunks unless we add it during indexing.
+        # If standard chunks don't have it, we might be sorting by implicit insertion order or _id
+        
+        cursor = collection.find({}).sort("_id", -1).limit(10)
+        recent = []
+        for doc in cursor:
+            # content field depends on LangChain Mongo schema usually 'text' or 'page_content'
+            text = doc.get("text") or doc.get("page_content") or ""
+            metadata = doc.get("metadata", {})
+            
+            recent.append({
+                "id": str(doc["_id"]),
+                "source": metadata.get("source", "Unknown"),
+                "text_snippet": text[:50] + "..." if len(text) > 50 else text,
+                "tokens": int(len(text) / 4), # rough est
+                "indexed_at": doc["_id"].generation_time.isoformat() # ObjectId has timestamp
+            })
+            
+        return jsonify(recent), 200
+    except Exception as e:
+        logger.error(f"Recent vectors error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/vector/search', methods=['POST'])
+def semantic_search_playground():
+    """Test retrieval relevance."""
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    data = request.get_json()
+    query = data.get("query", "")
+    k = data.get("k", 5)
+    
+    if not query:
+        return jsonify({"error": "Query required"}), 400
+        
+    try:
+        # Perform similarity search with scores
+        results = vector_store.similarity_search_with_score(query, k=k)
+        
+        formatted_res = []
+        for doc, score in results:
+            formatted_res.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": round(score, 4) # Cosine similarity score (usually 0 to 1 or -1 to 1)
+            })
+            
+        return jsonify(formatted_res), 200
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/upload/file', methods=['POST'])
@@ -295,6 +555,6 @@ def delete_document(doc_id):
         logger.error(f"Delete error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# if __name__ == '__main__':
-#     port = int(os.environ.get("PORT", 5000))
-#     app.run(host='0.0.0.0', port=port, debug=True)
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)

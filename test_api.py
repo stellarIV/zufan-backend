@@ -2,7 +2,7 @@ import requests
 import json
 import time
 
-BASE_URL = "http://localhost:5000"
+BASE_URL = "https://zufan-backend.onrender.com"
 
 def test_health():
     print("Testing /health...")
