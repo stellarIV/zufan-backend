@@ -11,3 +11,5 @@ langchain-mongodb
 pymongo
 google-generativeai
 flasgger
+certifi
+dnspython

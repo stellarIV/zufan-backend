@@ -1,4 +1,5 @@
 import os
+import certifi
 import fitz  # PyMuPDF
 import tiktoken
 from tqdm.auto import tqdm
@@ -74,10 +75,13 @@ def setup_mongodb_vector_store(db_name, collection_name, index_name="vector_inde
     Initializes MongoDB Atlas Vector Store.
     """
     mongo_uri = os.environ.get("MONGODB_URI")
-    client = MongoClient(mongo_uri)
+    client = MongoClient(mongo_uri, tlsCAFile=certifi.where())
     collection = client[db_name][collection_name]
     
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004",
+        google_api_key=os.environ.get("GOOGLE_API_KEY")
+    )
     
     vector_store = MongoDBAtlasVectorSearch(
         collection=collection,

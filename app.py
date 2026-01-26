@@ -2,7 +2,7 @@ import os
 import logging
 import datetime
 from bson import ObjectId
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from flasgger import Swagger, swag_from
 from dotenv import load_dotenv
@@ -44,9 +44,13 @@ def init_app():
         vector_store = setup_mongodb_vector_store(db_name, collection_name)
         
         logger.info("Initializing LLM and RAG Chain...")
-        # using ChatGoogleGenerativeAI for better streaming support
-        # Switching to gemini-1.5-flash for better Free Tier availability
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+        # Using ChatGoogleGenerativeAI for better streaming support
+        # Using gemini-flash-latest alias to avoid version compatibility issues
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-flash-latest", 
+            temperature=0.3,
+            google_api_key=os.environ.get("GOOGLE_API_KEY")
+        )
         
         # Define Prompt Template (Amharic)
         # We need a prompt compatible with get_rag_chain which expects specific inputs
@@ -80,6 +84,27 @@ try:
     init_app()
 except Exception as e:
     logger.error("Application failed to initialize correctly.")
+
+@app.route('/')
+def index():
+    """
+    Landing page for the API.
+    """
+    return jsonify({
+        "message": "Welcome to the Zufan Amharic Legal RAG API",
+        "documentation": "/apidocs",
+        "health": "/health",
+        "upload_ui": "/upload",
+        "status": "online"
+    }), 200
+
+@app.route('/upload')
+def upload_page():
+    """
+    Serve the simple upload web app.
+    """
+    return render_template('upload.html')
+
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -419,8 +444,8 @@ def vector_stats():
             "total_vectors": total_vectors,
             "total_documents": total_docs,
             "index_size_mb": round(index_size_mb, 2),
-            "dimensions": 768, # ge-text-embedding-004 is 768
-            "model": "text-embedding-004"
+            "dimensions": 768, # ge-multilingual-e5-large is 768
+            "model": "multilingual-e5-large"
         }), 200
     except Exception as e:
         logger.error(f"Stats error: {e}")
@@ -509,6 +534,62 @@ def semantic_search_playground():
         logger.error(f"Search error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+
+@app.route('/api/vector/clear', methods=['DELETE'])
+def clear_all_vectors():
+    """
+    Purge all vectors and documents from the collection.
+    ---
+    responses:
+      200:
+        description: Vector store cleared successfully.
+    """
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        collection = vector_store._collection
+        res = collection.delete_many({})
+        return jsonify({
+            "message": "Vector store purged successfully",
+            "deleted_count": res.deleted_count
+        }), 200
+    except Exception as e:
+        logger.error(f"Clear all error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vectors/<vector_id>', methods=['DELETE'])
+def delete_single_vector(vector_id):
+    """
+    Delete a single vector by its MongoDB ID.
+    ---
+    parameters:
+      - name: vector_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Vector deleted successfully.
+      404:
+        description: Vector not found.
+    """
+    if not vector_store:
+        return jsonify({"error": "Database not initialized"}), 503
+        
+    try:
+        collection = vector_store._collection
+        res = collection.delete_one({"_id": ObjectId(vector_id)})
+        
+        if res.deleted_count > 0:
+            return jsonify({"message": f"Vector '{vector_id}' deleted"}), 200
+        else:
+            return jsonify({"error": "Vector not found"}), 404
+    except Exception as e:
+        logger.error(f"Delete vector error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/upload/file', methods=['POST'])
