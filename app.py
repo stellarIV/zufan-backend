@@ -58,18 +58,7 @@ def init_app():
         # {"context": retriever | format_docs, "question": RunnablePassthrough()} | prompt | llm | StrOutputParser()
         # So the prompt must accept 'context' and 'question' input variables.
         
-        template = """You are an Amharic Legal Assistant aka 'Zufan'. Use the following pieces of context to answer the question at the end.
-If you don't know the answer, just say that you don't know, don't try to make up an answer.
-Keep the answer as concise as possible.
-Always answer in Amharic unless requested otherwise.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:"""
+        template = """ከታች ያለው መረጃን በመጠቀም፣ የተጠየቀውን ጥያቄ መልስ።\n\nማብራሪያ:\n{context}\n\nጥያቄ: {question}\nመልስ:"""
         prompt = PromptTemplate.from_template(template)
         
         rag_chain, _ = get_rag_chain(vector_store, llm, prompt)
