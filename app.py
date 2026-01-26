@@ -47,7 +47,7 @@ def init_app():
         # Using ChatGoogleGenerativeAI for better streaming support
         # Using gemini-flash-latest alias to avoid version compatibility issues
         llm = ChatGoogleGenerativeAI(
-            model="gemini-flash-latest", 
+            model="gemini-2.0-flash", 
             temperature=0.3,
             google_api_key=os.environ.get("GOOGLE_API_KEY")
         )
