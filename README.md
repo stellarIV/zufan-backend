@@ -49,11 +49,28 @@ Upload a PDF for indexing.
 - **Format**: `multipart/form-data`
 - **Key**: `file` (PDF)
 
+#### `POST /api/upload/chunks`
+Directly index pre-chunked data (useful for integrating with custom scrapers or existing databases).
+- **Payload**: A list of chunk objects:
+  ```json
+  [
+    {
+      "page_number": 1,
+      "source": "Document_Name",
+      "sentence_chunk": "Amharic text content here..."
+    }
+  ]
+  ```
+
 #### `GET /api/documents`
-Returns a list of all indexed files and chunk counts.
+Returns a list of all indexed documents with detailed stats:
+- `type`: "PDF" or "Chunked"
+- `chunks`: Total vector count
+- `total_chars`: Total character count
+- `page_count`: Number of unique pages
 
 #### `DELETE /api/documents/<filename>`
-Removes all vectors associated with a specific file.
+Removes all vectors associated with a specific file or source name.
 
 ---
 
@@ -77,6 +94,24 @@ We recommend creating a `server/api.ts` file to wrap these calls. (See `frontend
 
 ### Step 2: Streaming Implementation
 Use the `ReadableStream` API from within your React hooks to read the `/api/chat` response chunk-by-chunk for a professional "typewriter" effect.
+
+### Step 3: Direct Chunk Ingestion (Python Example)
+If you have a custom pipeline or another AI project (e.g., using **Antigravity AI**) and want to sync pre-processed Amharic data:
+
+```python
+import requests
+
+data = [
+    {
+        "page_number": 1,
+        "source": "Legal_Proclamation_Draft",
+        "sentence_chunk": "የኢትዮጵያ ፌዴራላዊ ዴሞክራሲያዊ ሪፐብሊክ..."
+    }
+]
+
+response = requests.post("http://localhost:5000/api/upload/chunks", json=data)
+print(response.json())
+```
 
 ---
 

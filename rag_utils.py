@@ -6,8 +6,9 @@ from tqdm.auto import tqdm
 from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_mongodb import MongoDBAtlasVectorSearch
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from pymongo import MongoClient
 
 # --- Text Processing ---
@@ -70,24 +71,22 @@ class GeminiLLM(Runnable):
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-def setup_mongodb_vector_store(db_name, collection_name, index_name="vector_index"):
+def setup_chroma_vector_store(persist_directory="./chroma_db", collection_name="embeddings"):
     """
-    Initializes MongoDB Atlas Vector Store.
+    Initializes ChromaDB Vector Store with local persistence.
     """
-    mongo_uri = os.environ.get("MONGODB_URI")
-    client = MongoClient(mongo_uri, tlsCAFile=certifi.where())
-    collection = client[db_name][collection_name]
-    
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=os.environ.get("GOOGLE_API_KEY")
+    # Using local HuggingFace embeddings
+    # Note: multilingual-e5-large expects "query: " and "passage: " prefixes
+    embeddings = HuggingFaceEmbeddings(
+        model_name="intfloat/multilingual-e5-large",
+        model_kwargs={'device': 'cpu'}, # Use 'cuda' if GPU available
+        encode_kwargs={'normalize_embeddings': True}
     )
     
-    vector_store = MongoDBAtlasVectorSearch(
-        collection=collection,
-        embedding=embeddings,
-        index_name=index_name,
-        relevance_score_fn="cosine"
+    vector_store = Chroma(
+        collection_name=collection_name,
+        embedding_function=embeddings,
+        persist_directory=persist_directory
     )
     return vector_store
 
@@ -122,10 +121,35 @@ def index_text_chunks(vector_store, chunks: list[dict]):
 
 def delete_document_by_source(vector_store, source_name: str):
     """
-    Deletes all vectors associated with a specific source.
-    Note: MongoDB Atlas Vector Search requires a filter on metadata.
+    Deletes all vectors associated with a specific source in ChromaDB.
     """
-    # This depends on the vector store implementation
-    # For MongoDB, we can use the underlying collection:
-    vector_store._collection.delete_many({"source": source_name})
-    return True
+    # Chroma allows deleting by metadata filter
+    try:
+        vector_store.delete(where={"source": source_name})
+        return True
+    except Exception as e:
+        return False
+
+def index_processed_chunks(vector_store, amh_pages_and_chunks: list[dict]):
+    """
+    Directly indexes chunks in the format provided by the user.
+    Format: [{'page_number': 1, 'source': '...', 'sentence_chunk': '...'}, ...]
+    """
+    from langchain_core.documents import Document as LcDocument
+    
+    documents = [
+        LcDocument(
+            page_content=doc["sentence_chunk"], 
+            metadata={
+                'source': doc['source'],
+                'page': doc['page_number']
+            }
+        ) 
+        for doc in amh_pages_and_chunks 
+        if doc.get("sentence_chunk")
+    ]
+    
+    if documents:
+        vector_store.add_documents(documents)
+    
+    return len(documents)

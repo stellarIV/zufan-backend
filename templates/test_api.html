@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zufan API Tester</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+
+        h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 3px;
+            max-height: 300px;
+            overflow: auto;
+            font-size: 13px;
+        }
+
+        .chat-box {
+            height: 300px;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            padding: 10px;
+            overflow-y: scroll;
+            background: #fafafa;
+        }
+
+        .user-msg {
+            color: blue;
+            margin-bottom: 5px;
+        }
+
+        .ai-msg {
+            color: green;
+            margin-bottom: 10px;
+            font-weight: bold;
+            white-space: pre-wrap;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 5px 15px;
+        }
+
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Zufan API Tester</h1>
+
+    <section>
+        <h2>1. System Status</h2>
+        <div class="controls">
+            <button onclick="checkHealth()">Check Health</button>
+            <button onclick="getStats()">Vector Stats</button>
+        </div>
+        <pre id="statusOutput">Click a button to check status...</pre>
+    </section>
+
+    <section>
+        <h2>2. Document Management (Admin)</h2>
+        <div class="controls">
+            <input type="file" id="fileInput">
+            <button onclick="uploadFile()">Upload PDF</button>
+        </div>
+        <div class="controls">
+            <button onclick="listDocuments()">List Documents</button>
+            <button onclick="clearVectors()" style="color: red;">Clear All Vectors</button>
+        </div>
+        <pre id="docOutput">Document list will appear here...</pre>
+    </section>
+
+    <section>
+        <h2>3. Chunked Ingestion (Specific Format)</h2>
+        <p><small>Paste a list of dictionaries with <code>sentence_chunk</code>, <code>source</code>, and
+                <code>page_number</code>.</small></p>
+        <textarea id="chunkInput" style="width: 100%; height: 150px; margin-bottom: 10px; font-family: monospace;">[
+  {
+    "page_number": 1,
+    "source": "Sample_Source",
+    "sentence_chunk": "ይህ ለሙከራ የቀረበ የአማርኛ ጽሑፍ ነው።"
+  }
+]</textarea>
+        <div class="controls">
+            <button onclick="uploadChunks()">Upload Chunks</button>
+        </div>
+        <pre id="chunkOutput">Response will appear here...</pre>
+    </section>
+
+    <section>
+        <h2>4. Chat (User)</h2>
+        <div id="chatBox" class="chat-box"></div>
+        <div class="controls">
+            <input type="text" id="chatInput" placeholder="Ask in Amharic..."
+                onkeypress="if(event.key==='Enter') sendMessage(event)">
+            <button onclick="sendMessage(null)">Send</button>
+        </div>
+    </section>
+
+    <script>
+        const log = (elId, data) => {
+            document.getElementById(elId).textContent = JSON.stringify(data, null, 2);
+        };
+
+        // --- Status ---
+        async function checkHealth() {
+            const res = await fetch('/health');
+            log('statusOutput', await res.json());
+        }
+
+        async function getStats() {
+            const res = await fetch('/api/vector/stats');
+            log('statusOutput', await res.json());
+        }
+
+        // --- Admin ---
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files[0]) return alert('Select a file');
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            document.getElementById('docOutput').textContent = "Uploading...";
+            const res = await fetch('/api/upload/file', { method: 'POST', body: formData });
+            log('docOutput', await res.json());
+        }
+
+        async function listDocuments() {
+            const res = await fetch('/api/documents');
+            const docs = await res.json();
+            log('docOutput', docs);
+        }
+
+        async function clearVectors() {
+            if (!confirm('Are you sure you want to delete ALL vectors?')) return;
+            const res = await fetch('/api/vector/clear', { method: 'DELETE' });
+            log('docOutput', await res.json());
+        }
+
+        async function uploadChunks() {
+            const input = document.getElementById('chunkInput');
+            try {
+                const jsonStr = input.value.trim();
+                console.log("Parsing JSON:", jsonStr);
+                const chunks = JSON.parse(jsonStr);
+                document.getElementById('chunkOutput').textContent = "Processing...";
+
+                const res = await fetch('/api/upload/chunks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(chunks)
+                });
+
+                log('chunkOutput', await res.json());
+            } catch (e) {
+                document.getElementById('chunkOutput').textContent = "Invalid JSON: " + e.message;
+            }
+        }
+
+        // --- Chat ---
+        async function sendMessage(event) {
+            if (event) event.preventDefault();
+
+            const input = document.getElementById('chatInput');
+            const query = input.value.trim();
+            if (!query) return;
+
+            console.log("Sending query:", query);
+            const chatBox = document.getElementById('chatBox');
+            chatBox.innerHTML += `<div class="user-msg">User: ${query}</div>`;
+            input.value = '';
+
+            const aiDiv = document.createElement('div');
+            aiDiv.className = 'ai-msg';
+            aiDiv.textContent = 'AI: ';
+            chatBox.appendChild(aiDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [{ role: 'user', content: query }]
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    aiDiv.textContent += `Error: ${err.error || 'Server error'}`;
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    aiDiv.textContent += chunk;
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            } catch (error) {
+                console.error("Fetch error:", error);
+                aiDiv.textContent += `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+
+</html>

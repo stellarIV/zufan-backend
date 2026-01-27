@@ -13,3 +13,7 @@ google-generativeai
 flasgger
 certifi
 dnspython
+chromadb
+langchain-chroma
+sentence-transformers
+langchain-huggingface
