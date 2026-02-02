@@ -16,7 +16,8 @@ from rag_utils import (
     index_text_chunks,
     delete_document_by_source,
     GeminiLLM,
-    index_processed_chunks
+    index_processed_chunks,
+    AuditLogger
 )
 
 # Load environment variables
@@ -42,6 +43,7 @@ swagger = Swagger(app)
 # Global objects
 vector_store = None
 rag_chain = None
+audit_logger = AuditLogger()
 
 def init_app():
     global vector_store, rag_chain
@@ -165,8 +167,10 @@ def chat():
                     yield chunk
             except Exception as e:
                 logger.error(f"Error during generation: {e}")
+                audit_logger.log_event("CHAT_ERROR", str(e), level="ERROR")
                 yield f"Error: {str(e)}"
 
+        audit_logger.log_event("CHAT_QUERY", query[:100] + "..." if len(query) > 100 else query)
         return Response(stream_with_context(generate()), content_type='text/plain')
 
     except Exception as e:
@@ -304,6 +308,7 @@ def clear_all_vectors():
         ids = vector_store._collection.get()["ids"]
         if ids:
             vector_store.delete(ids=ids)
+        audit_logger.log_event("VECTOR_STORE_CLEAR", f"Deleted {len(ids)} vectors", level="WARNING")
         return jsonify({
             "message": "Vector store purged successfully",
             "deleted_count": len(ids)
@@ -385,6 +390,8 @@ def upload_file():
             
         count = index_text_chunks(vector_store, formatted_chunks)
         
+        audit_logger.log_event("DOCUMENT_UPLOAD", f"File: {filename}, Chunks: {count}", metadata={"filename": filename})
+        
         # Cleanup
         os.remove(temp_path)
         
@@ -448,6 +455,8 @@ def upload_chunks():
             count = index_text_chunks(vector_store, chunks)
         else:
             return jsonify({"error": "Invalid request format. Expected a list of chunks or a dict with 'chunks' key."}), 400
+        
+        audit_logger.log_event("CHUNK_INGESTION", f"Count: {count}")
         
         return jsonify({
             "message": "Chunks indexed successfully",
@@ -527,6 +536,7 @@ def delete_document(doc_id):
         success = delete_document_by_source(vector_store, doc_id)
         
         if success:
+            audit_logger.log_event("DOCUMENT_DELETE", f"Source: {doc_id}")
             return jsonify({"message": f"Document '{doc_id}' deleted"}), 200
         else:
             return jsonify({"error": "Delete failed"}), 400
@@ -534,6 +544,28 @@ def delete_document(doc_id):
     except Exception as e:
         logger.error(f"Delete error: {e}")
         return jsonify({"error": str(e)}), 500
+
+# --- Audit Log Endpoints ---
+
+@app.route('/api/audit/logs', methods=['GET'])
+def get_audit_logs():
+    """
+    Retrieve recently system events.
+    """
+    limit = request.args.get('limit', 50, type=int)
+    logs = audit_logger.get_logs(limit=limit)
+    return jsonify(logs), 200
+
+@app.route('/api/audit/logs', methods=['DELETE'])
+def clear_audit_logs():
+    """
+    Clear the audit history.
+    """
+    success = audit_logger.clear_logs()
+    if success:
+        return jsonify({"message": "Audit logs cleared"}), 200
+    else:
+        return jsonify({"error": "Failed to clear logs"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))

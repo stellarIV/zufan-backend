@@ -87,6 +87,17 @@ Returns system health: Total vectors, Index size, and Model info.
 
 ---
 
+### 4. Audit & System History
+#### `GET /api/audit/logs`
+Retrieve the last 50 system events (uploads, queries, errors, deletions).
+- **Query Param**: `limit` (default 50)
+- **Returns**: A list of log objects with timestamps and metadata.
+
+#### `DELETE /api/audit/logs`
+Clear the persistent audit history.
+
+---
+
 ## 🔄 Integration Path (Next.js)
 
 ### Step 1: Centralized API Client

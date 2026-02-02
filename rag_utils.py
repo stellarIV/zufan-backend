@@ -153,3 +153,73 @@ def index_processed_chunks(vector_store, amh_pages_and_chunks: list[dict]):
         vector_store.add_documents(documents)
     
     return len(documents)
+
+# --- Audit Logging ---
+
+class AuditLogger:
+    """
+    Handles persistent audit logs using SQLite.
+    """
+    def __init__(self, db_path="audit_logs.db"):
+        import sqlite3
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        import sqlite3
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    action TEXT NOT NULL,
+                    detail TEXT,
+                    level TEXT DEFAULT 'INFO',
+                    metadata TEXT
+                )
+            """)
+            conn.commit()
+
+    def log_event(self, action, detail, level="INFO", metadata=None):
+        import sqlite3
+        import json
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT INTO logs (action, detail, level, metadata) VALUES (?, ?, ?, ?)",
+                    (action, detail, level, json.dumps(metadata) if metadata else None)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"Failed to log event: {e}")
+
+    def get_logs(self, limit=50):
+        import sqlite3
+        import json
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT ?", (limit,))
+                rows = cursor.fetchall()
+                
+                logs = []
+                for row in rows:
+                    log_dict = dict(row)
+                    if log_dict["metadata"]:
+                        log_dict["metadata"] = json.loads(log_dict["metadata"])
+                    logs.append(log_dict)
+                return logs
+        except Exception as e:
+            print(f"Failed to fetch logs: {e}")
+            return []
+
+    def clear_logs(self):
+        import sqlite3
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM logs")
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Failed to clear logs: {e}")
+            return False

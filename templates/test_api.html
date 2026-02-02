@@ -119,7 +119,16 @@
     </section>
 
     <section>
-        <h2>4. Chat (User)</h2>
+        <h2>4. Audit Logs (System History)</h2>
+        <div class="controls">
+            <button onclick="getAuditLogs()">Refresh Logs</button>
+            <button onclick="clearAuditLogs()" style="color: red;">Clear Logs</button>
+        </div>
+        <pre id="auditOutput">System events will appear here...</pre>
+    </section>
+
+    <section>
+        <h2>5. Chat (User)</h2>
         <div id="chatBox" class="chat-box"></div>
         <div class="controls">
             <input type="text" id="chatInput" placeholder="Ask in Amharic..."
@@ -187,6 +196,18 @@
             } catch (e) {
                 document.getElementById('chunkOutput').textContent = "Invalid JSON: " + e.message;
             }
+        }
+
+        async function getAuditLogs() {
+            const res = await fetch('/api/audit/logs');
+            const logs = await res.json();
+            log('auditOutput', logs);
+        }
+
+        async function clearAuditLogs() {
+            if (!confirm('Are you sure you want to delete ALL audit logs?')) return;
+            const res = await fetch('/api/audit/logs', { method: 'DELETE' });
+            log('auditOutput', await res.json());
         }
 
         // --- Chat ---
