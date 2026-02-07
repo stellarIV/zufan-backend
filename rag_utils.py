@@ -24,9 +24,42 @@ def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> i
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
+# --- Translation ---
+
+def translate_text(text: str, target_lang: str = "English") -> str:
+    """
+    Translates text to the target language using Gemini.
+    """
+    try:
+        # Initialize Gemini for translation
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        import os
+        
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return text # Cannot translate without key
+            
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash", 
+            temperature=0.3,
+            google_api_key=api_key
+        )
+        
+        msg = [
+            ("system", "You are a professional translator. Your task is to translate the following text from Amharic to English. output ONLY the English translation with no additional text or explanations."),
+            ("user", f"Translate this:\n\n{text}")
+        ]
+        
+        response = llm.invoke(msg)
+        return response.content
+    except Exception as e:
+        print(f"Translation error: {e}")
+        return text # Fallback to original text
+
 # --- PDF Reading ---
 
-def open_and_read_pdf(pdf_path: str, source: str = None) -> list[dict]:
+
+def open_and_read_pdf(pdf_path: str, source: str = None, translate: bool = False) -> list[dict]:
     """
     Opens a PDF file, reads its text content page by page, and collects statistics.
     """
@@ -35,6 +68,16 @@ def open_and_read_pdf(pdf_path: str, source: str = None) -> list[dict]:
     for page_number, page in tqdm(enumerate(doc)):
         text = page.get_text()
         text = text_formatter(text)
+        
+        # Translate if requested
+        if translate and text.strip():
+            # Translate page content
+            translated_text = translate_text(text)
+            # We keep the original for record? Or just replace?
+            # For this task "make amharic pdf to english accepting", replacement seems appropriate 
+            # so the embedding is on English text.
+            text = translated_text
+
         pages_and_texts.append({
             "page_number": page_number + 1,
             "page_char_count": len(text),

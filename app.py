@@ -370,9 +370,12 @@ def upload_file():
         
         logger.info(f"Processing file: {filename}")
         
+        translate_param = request.form.get('translate', 'false')
+        translate = translate_param.lower() in ('true', '1', 'yes')
+        
         # Read PDF
         # rag_utils.open_and_read_pdf returns list of dicts with text and metadata stats
-        chunks_data = open_and_read_pdf(temp_path)
+        chunks_data = open_and_read_pdf(temp_path, translate=translate)
         
         # We need to adapt chunks_data to format expected by index_text_chunks
         # open_and_read_pdf returns: 
